@@ -1,4 +1,4 @@
-"""DMM Cast, independent cache-only TorBox search, and hoster aggregation.
+"""DMM Cast and independent cache-only TorBox search.
 
 Set DMM_TOKEN and TORBOX_API_KEY in the environment, then run python addon.py.
 Independent TorBox results do not depend on the upstream Cast stream budget.
@@ -488,11 +488,6 @@ def tmdb_from_imdb(imdb_id, media_type):
 PROVIDERS = {
     "dmm": dmm,
     "torbox": TORBOX.streams,
-    "chq": chq,
-    "primesrc": primesrc,
-    "twoembed": twoembed,
-    "multiembed": multiembed,
-    "vidsrc": vidsrc,
 }
 
 # --------------------------------------------------------------------------
@@ -558,7 +553,8 @@ def collect(imdb_id, media_type, season, episode):
         return tmdb
 
     # Direct IMDb providers start immediately, even if metadata is unavailable.
-    metadata = _metadata_pool.submit(lookup_tmdb)
+    needs_metadata = any(name not in ("dmm", "torbox") and name not in DISABLED for name in PROVIDERS)
+    metadata = _metadata_pool.submit(lookup_tmdb) if needs_metadata else None
 
     def with_tmdb(fn):
         tmdb = metadata.result(timeout=max(0, deadline - time.monotonic()))
@@ -591,7 +587,8 @@ def collect(imdb_id, media_type, season, episode):
             # API credentials and upstream URLs must never appear in logs.
             detail = str(exc) if isinstance(exc, ProviderError) else type(exc).__name__
             sys.stderr.write("provider %s: %s\n" % (name, detail))
-    metadata.cancel()
+    if metadata is not None:
+        metadata.cancel()
 
     # Dedupe on the playable URL; DMM entries also carry infoHash.
     seen = set()
@@ -622,11 +619,11 @@ def collect(imdb_id, media_type, season, episode):
 
 MANIFEST = {
     "id": "org.dmmplus.aggregator",
-    "version": "1.1.2",
+    "version": "1.2.0",
     "name": "DMM Plus",
     "description": (
-        "DMM Cast plus independent TorBox cached torrent search when configured, "
-        "CHQ, PrimeSrc, 2Embed, MultiEmbed and VidSrc. DMM Cast's upstream limit still applies."
+        "DMM Cast and independent cached TorBox torrent search. "
+        "DMM Cast's upstream limit still applies; additional cached TorBox files are searched separately."
     ),
     "logo": "https://static.debridmediamanager.com/dmmcast.png",
     "resources": ["stream"],
