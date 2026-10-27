@@ -1,0 +1,7 @@
+DMM Plus on http://0.0.0.0:7100/manifest.json
+  dmm token : _oKCkbeH_FFa
+  providers : dmm, chq, primesrc, twoembed, multiembed, vidsrc
+  max streams: 60
+127.0.0.1 "GET /health HTTP/1.1" 200 -
+127.0.0.1 "GET /manifest.json HTTP/1.1" 200 -
+127.0.0.1 "GET /stream/movie/tt0137523.json HTTP/1.1" 200 -
