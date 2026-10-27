@@ -617,8 +617,24 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def do_HEAD(self):
+        # Load balancers and uptime probes issue HEAD /; BaseHTTPRequestHandler
+        # answers 501 otherwise, which some platforms read as unhealthy.
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
+
+        if path in ("", "/", "/index"):
+            return self.send_json({
+                "name": MANIFEST["name"],
+                "version": MANIFEST["version"],
+                "addon": "/manifest.json",
+                "health": "/health",
+            })
 
         if path in ("/manifest.json", "/manifest"):
             return self.send_json(MANIFEST)
