@@ -8,6 +8,7 @@ cache-only add and maps filenames to TorBox's own file IDs.
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import re
 import secrets
@@ -257,9 +258,14 @@ class TorBoxProvider:
         finally:
             self.last_checked = int(time.time())
 
-    def resolve(self, token):
+    def resolve(self, token, user_ip=None):
         payload = self._decode(token)
-        cache_key = (payload["h"], payload["f"])
+        try:
+            address = ipaddress.ip_address(user_ip) if user_ip else None
+            user_ip = str(address) if address and address.is_global else None
+        except ValueError:
+            user_ip = None
+        cache_key = (payload["h"], payload["f"], user_ip)
         end = time.monotonic() + 25
         # Resolution is serialized, keeping repeated clicks from adding/minting
         # the same torrent concurrently and bounding this single account's load.
@@ -291,8 +297,12 @@ class TorBoxProvider:
             if not selected or type(selected.get("id")) is not int or selected["id"] < 0:
                 raise ProviderError("file_not_found")
             # TorBox IDs need not equal the index of the file in any listing.
-            link = self._api("requestdl", {"token": self.api_key, "torrent_id": torrent_id,
-                                           "file_id": selected["id"]}, end=end)
+            params = {"token": self.api_key, "torrent_id": torrent_id, "file_id": selected["id"]}
+            if user_ip:
+                # The browser/player needs its nearest CDN, rather than the
+                # server's region. Keep minted URLs separate for each viewer.
+                params["user_ip"] = user_ip
+            link = self._api("requestdl", params, end=end)
             parsed = urllib.parse.urlsplit(link) if isinstance(link, str) else None
             if (not parsed or parsed.scheme != "https" or not parsed.hostname
                     or parsed.username or parsed.password or "\r" in link or "\n" in link):

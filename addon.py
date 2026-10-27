@@ -6,6 +6,7 @@ Independent TorBox results do not depend on the upstream Cast stream budget.
 
 import concurrent.futures
 import json
+import ipaddress
 import os
 import re
 import ssl
@@ -621,7 +622,7 @@ def collect(imdb_id, media_type, season, episode):
 
 MANIFEST = {
     "id": "org.dmmplus.aggregator",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "name": "DMM Plus",
     "description": (
         "DMM Cast plus independent TorBox cached torrent search when configured, "
@@ -681,7 +682,19 @@ class Handler(BaseHTTPRequestHandler):
             if not TORBOX_API_KEY:
                 return self.send_json({"error": "TorBox is not configured"}, 503)
             try:
-                link = TORBOX.resolve(path[len("/torbox/play/"):])
+                # Render sets X-Forwarded-For. Use the first valid public client
+                # address for CDN selection, falling back to the socket peer.
+                addresses = self.headers.get("X-Forwarded-For", "").split(",") + [self.client_address[0]]
+                viewer_ip = None
+                for candidate in addresses:
+                    try:
+                        address = ipaddress.ip_address(candidate.strip())
+                        if address.is_global:
+                            viewer_ip = str(address)
+                            break
+                    except ValueError:
+                        continue
+                link = TORBOX.resolve(path[len("/torbox/play/"):], user_ip=viewer_ip)
             except InvalidPlayLink:
                 return self.send_json({"error": "Play link expired or invalid; refresh the stream list"}, 410)
             except ProviderError as exc:

@@ -89,6 +89,17 @@ class TorBoxTests(unittest.TestCase):
                 self.provider.resolve(token)
         self.assertEqual(api.call_count, 1)
 
+    def test_hosted_playback_selects_viewer_cdn(self):
+        token = self.provider._play_path(H1, FILE["name"], None, None).rsplit("/", 1)[-1]
+        responses = [{H1: {"files": [FILE]}}, {"torrent_id": 77},
+                     {"id": 77, "hash": H1, "download_finished": True, "files": [FILE]},
+                     "https://cdn.torbox.app/signed-video"]
+        with patch.object(self.provider, "_api", side_effect=responses) as api:
+            self.provider.resolve(token, user_ip="8.8.8.8")
+        self.assertEqual(api.call_args.args[1]["user_ip"], "8.8.8.8")
+        self.assertIn((H1, FILE["name"], "8.8.8.8"), self.provider._links)
+        self.assertNotIn((H1, FILE["name"], None), self.provider._links)
+
     def test_wrong_torrent_cannot_resolve(self):
         token = self.provider._play_path(H1, FILE["name"], None, None).rsplit("/", 1)[-1]
         responses = [{H1: {"files": [FILE]}}, {"torrent_id": 77},

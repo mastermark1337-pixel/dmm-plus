@@ -1,4 +1,4 @@
-# DMM Plus 1.1.1
+# DMM Plus 1.1.2
 
 Stremio/Nuvio stream add-on combining DMM Cast, independent cached TorBox torrent search, and the existing hoster providers. Python standard library only.
 
@@ -39,4 +39,3 @@ Set `DMM_TOKEN` and `TORBOX_API_KEY` in your environment, then run `python addon
 Run regression tests with `python -m unittest discover -s tests -v`. Tests cover more than five cached entries, no additions during discovery, expired/tampered playback links, correct TorBox file IDs, series matching, cache disappearance, provider failure isolation, and bounded aggregation waits.
 
 Upstream documentation: [TorBox API](https://api-docs.torbox.app/), [Torrentio source](https://github.com/TheBeastLT/torrentio-scraper), [DMM source](https://github.com/debridmediamanager/debrid-media-manager).
-
