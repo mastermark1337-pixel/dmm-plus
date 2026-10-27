@@ -1,4 +1,4 @@
-﻿"""DMM Plus â€” Debrid Media Manager streams + UKTurks providers in one addon.
+"""DMM Plus â€” Debrid Media Manager streams + UKTurks providers in one addon.
 
 Why this exists: the DMM Cast for TorBox addon returns at most 5 file entries
 per title (it appends a "cast" entry on top, so 6 total). There is no query
