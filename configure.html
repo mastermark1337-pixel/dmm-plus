@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Set up TorBox Plus</title>
+  <link rel="stylesheet" href="/configure.css"><script src="/configure.js" defer></script>
+</head>
+<body>
+  <main>
+    <a class="brand" href="/configure"><span class="mark">T+</span> TORBOX PLUS</a>
+    <div class="eyebrow">YOUR ACCOUNT. YOUR STREAMS.</div>
+    <h1>A personal link.<br>Ready for Nuvio.</h1>
+    <p class="intro">Connect your TorBox account to search cached movie and TV files. No DMM Cast dependency. No five-result limit.</p>
+    <section class="card" aria-labelledby="setup-title">
+      <div class="section-label">01 / CONNECT</div>
+      <h2 id="setup-title">Use your own TorBox account</h2>
+      <form id="setup-form">
+        <label for="api-key">TorBox API key</label>
+        <div class="key-row"><input id="api-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required minlength="16" maxlength="256" placeholder="Paste your TorBox API key"><button id="toggle-key" class="secondary" type="button" aria-label="Show API key">Show</button></div>
+        <p class="hint">Find it in <a href="https://torbox.app/settings" target="_blank" rel="noopener noreferrer">TorBox account settings</a>. This server verifies your key with TorBox and encrypts it in your personal install link.</p>
+        <details><summary>Stream preferences</summary><div class="preferences">
+          <label class="check"><input id="prefer-english" type="checkbox" checked> Prefer English-labelled releases</label>
+          <label class="check"><input id="hide-cam" type="checkbox"> Hide CAM and telesync copies</label>
+          <div class="columns"><label>Maximum results<select id="max-streams"><option>25</option><option>50</option><option selected>100</option><option>200</option></select></label><label>Maximum file size (GB)<input id="max-size" type="number" min="0" max="1000" step="1" value="0"><small>0 means no size limit</small></label></div>
+        </div></details>
+        <button id="create-link" class="primary" type="submit">Create my install link <span aria-hidden="true">↗</span></button>
+        <p id="status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+    <section id="result" class="card" hidden aria-labelledby="result-title">
+      <div class="section-label">02 / ADD TO NUVIO</div><h2 id="result-title">Your personal link is ready</h2>
+      <label for="manifest-link">Nuvio add-on URL</label><input id="manifest-link" readonly spellcheck="false" aria-label="Personal Nuvio manifest link">
+      <button id="copy-link" class="primary" type="button">Copy my install link</button>
+      <p class="hint">In Nuvio, open <strong>Settings → Content &amp; Discovery → Addons</strong>, paste this URL, then choose <strong>Install Addon</strong>.</p>
+      <p class="private-note">Keep this personal link private. Anyone with it can use your TorBox account through the add-on. To invalidate it, reset your API key in TorBox.</p>
+    </section>
+    <section class="share"><div class="section-label">SHARE THE SETUP, NOT YOUR ACCOUNT</div><h2>Invite your friends.</h2><p>Send them this setup page. Each person enters their own key and gets their own installation link.</p><button id="copy-setup" type="button" class="secondary">Copy setup page link</button><span id="share-status" role="status"></span></section>
+    <footer>Cached files only · Movies &amp; TV · UKTurks stays separate</footer>
+  </main>
+</body></html>

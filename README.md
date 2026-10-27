@@ -1,50 +1,48 @@
-# TorBox Plus 2.0.1
+# TorBox Plus 3.0 — personal installation links
 
-Independent Nuvio/Stremio add-on using your TorBox account. It queries Peerflix and Knaben, verifies matching files against TorBox cache, removes duplicates, and returns signed playback links. It does not call DMM Cast and has no five-result limit.
+Independent Nuvio/Stremio add-on using each viewer's own TorBox account. Peerflix and Knaben supply search candidates; only matching files confirmed cached on TorBox become playable links. No DMM Cast dependency or five-result limit.
 
-## Install
+## Share with friends
 
-Add `https://dmm-plus.onrender.com/manifest.json` in Nuvio. The displayed add-on name is **TorBox Plus**. The existing URL and internal manifest ID are retained so previous DMM Plus installations can update. The original **DMM Cast for TorBox** is a separate add-on and retains its own limits.
+Send **https://dmm-plus.onrender.com/configure**. Each person enters their own TorBox API key, chooses optional preferences and copies their personal manifest URL into Nuvio's Addons settings.
 
-## How results work
+Personal manifest URLs are private bearer links: someone who has one can use that account through the add-on. Share the setup page, not a personal manifest. TorBox API keys are encrypted and authenticated in installation links using Fernet. They are not stored in an account database. The server decrypts a key when serving that person's requests, and retains a bounded number of account clients in memory. Only TorBox receives the key from this server; the search indexes receive title/IMDb identifiers.
 
-- Only cache-confirmed video files are offered. Browsing never adds a torrent.
-- Peerflix searches by IMDb id. Knaben searches using public Cinemeta metadata, verifies the title/year, and checks matching files against TorBox.
-- English-labelled releases are preferred; unknown language is kept, not guessed. CAM/TS releases are ranked below better copies within the language group. CAM entries stay visible by default for new titles.
-- Resolution, codec, HDR and release type labels come from the filename. File size comes from TorBox.
-- Identical filenames and byte sizes are deduplicated across hashes/indexes.
-- A TV pack is offered only if its cached file listing identifies the requested episode unambiguously. An index's file number is never treated as a TorBox file ID.
-- Selecting a result rechecks its cache status, performs a cache-only add, maps the actual TorBox file ID and redirects to a CDN chosen for the viewer. Added cached torrents remain in your TorBox library.
-- One index failure does not hide the other index. `/health` reports safe per-index status and candidate counts.
+The bare `/manifest.json` requires configuration and cannot stream using the server owner's account. Existing installations using that bare URL must install a personal URL. Old public playback paths are no longer accepted.
 
-Counts depend on index coverage and what TorBox currently caches. There is no promise of a fixed count or a complete copy of any other service's search database.
+## Behaviour
 
-## Configuration
+- Cached files only. Browsing never adds torrents. Selecting a file performs a cache-only add, then maps the actual TorBox file ID and chooses a CDN for the viewer. Added cached torrents remain in that user's library.
+- Search/result/playback caches are separated by encrypted installation identity. Keys, personal config tokens and playback grants are redacted from application access logs.
+- Filenames drive resolution/codec/HDR/release labels. English-labelled releases are preferred, unknown language remains visible, and CAM/TS copies are demoted. Exact duplicate files, including copy-number suffixes, are collapsed using filename and byte size.
+- TV packs are offered only when the requested episode is identified unambiguously in the cached file listing. Upstream file indexes are never used as TorBox file IDs.
+- One failed index does not hide results from the other. Counts vary with available releases and cache coverage.
+- UKTurks stays separate.
 
-Only `TORBOX_API_KEY` is required. Save it in Render's environment, never in the repository. Indexes receive the title/IMDb identifier, never the account key. The key is sent exclusively to TorBox's API.
+## Server configuration
+
+`CONFIG_SECRET` is required for personal links. Generate it once with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and save it privately in the host's environment. Keep it stable across deploys; replacing it invalidates all existing personal installation links. Never commit this secret or account keys.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TORBOX_API_KEY` | unset | Your TorBox account key |
-| `TORBOX_MAX_STREAMS` | `100` | Maximum unique results per title, configurable up to 200 |
-| `TORBOX_MAX_CANDIDATES` | `300` | Index candidates checked, up to 1,000; Knaben returns up to 300 |
-| `PREFER_ENGLISH` | `true` | Prefer explicitly English-labelled releases |
-| `HIDE_CAM` | `false` | Exclude CAM/TS copies if enabled |
-| `MAX_FILE_SIZE_GB` | `0` | Optional size ceiling; zero means unlimited |
-| `KNABEN_ENABLED` | `true` | Enable the independent Knaben search |
-| `TORRENT_SEARCH_URL` | `https://addon.peerflix.mov` | Primary compatible HTTPS torrent index |
-| `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Public origin for signed playback links |
+| `CONFIG_SECRET` | unset | Persistent Fernet encryption key for personal links |
 | `PORT` | `7100` | HTTP port; supplied by Render |
+| `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Public HTTPS origin |
+| `TORBOX_MAX_CANDIDATES` | `300` | Maximum search candidates checked, bounded to 1,000 |
+| `KNABEN_ENABLED` | `true` | Enable Knaben alongside the primary index |
+| `TORRENT_SEARCH_URL` | `https://addon.peerflix.mov` | Primary compatible HTTPS index |
 | `PROVIDER_TIMEOUT` | `14` | Per-call network timeout |
-| `SOFT_DEADLINE` | `14` | Response budget, including source fan-out and cache checks |
+| `SOFT_DEADLINE` | `14` | Search and aggregation response budget |
 | `CACHE_TTL` | `180` | Successful search cache lifetime; empty results expire within 10 seconds |
 
-`DMM_TOKEN` is no longer read or needed. UKTurks remains a separate add-on.
+Each personal link carries its own preferences: prefer English, hide CAM, maximum results (1–200), and a file-size limit. `TORBOX_API_KEY` is not needed for shared deployments. There is no public account fallback.
 
 ## Development
 
-Run `python addon.py`. Test with `python -m unittest discover -s tests -v`. No dependencies beyond Python 3.9+ standard library.
+Python 3.12 recommended. Install `pip install -r requirements.txt`, then run `python addon.py`. Run tests with `python -m unittest discover -s tests -v`.
 
-Routes: `/manifest.json`, `/health`, `/stream/movie/{imdb}.json`, `/stream/series/{imdb}:{season}:{episode}.json`, and signed `/torbox/play/...` paths.
+Public routes: `/configure`, `/api/configure` (POST), `/manifest.json`, `/health`. Personal routes live under `/c/{encrypted-config}/`: `manifest.json`, `stream/movie/{imdb}.json`, `stream/series/{imdb}:{season}:{episode}.json`, `health`, and signed `torbox/play/...` paths.
 
-Documentation: [TorBox API](https://api-docs.torbox.app/), [Knaben API](https://knaben.org/api/v2/), [Stremio protocol](https://stremio.github.io/stremio-addon-sdk/protocol.html).
+Account revocation: reset the API key in TorBox and generate a new installation link. There is no central user-account database or per-link revoke list. The encrypted key remains accessible to the server operator; this is server-side encryption, not end-to-end encryption.
+
+Documentation: [TorBox API](https://api-docs.torbox.app/), [Fernet](https://cryptography.io/en/latest/fernet/), [Knaben API](https://knaben.org/api/v2/), [Stremio protocol](https://stremio.github.io/stremio-addon-sdk/protocol.html).

@@ -33,6 +33,7 @@ VIDEO = re.compile(r"\.(?:mkv|mp4|avi|m4v|mov|ts|m2ts|webm)$", re.I)
 SUPPLEMENT = re.compile(r"(?:^|[\W_])(?:sample|trailer|extras?|featurettes?|bonus)(?:[\W_]|$)", re.I)
 HASH = re.compile(r"^[a-f0-9]{40}$")
 UA = "DMM-Plus/1.3"
+SEARCH_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix="index")
 
 
 def words(text):
@@ -118,7 +119,7 @@ class TorBoxProvider:
         self.public_base = public_base.rstrip("/")
         self.search_label = parsed.hostname
         self.enable_knaben = bool(enable_knaben)
-        self._search_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="index")
+        self._search_pool = SEARCH_POOL
         self._metadata = {}
         self._sign_key = hashlib.sha256(("DMM-Plus-play:" + self.api_key).encode()).digest()
         self._lock = threading.Lock()

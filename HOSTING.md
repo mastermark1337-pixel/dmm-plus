@@ -1,15 +1,17 @@
 # Render deployment
 
-The Docker service builds `addon.py` and `torbox_provider.py` from this repository.
+The Docker image installs the pinned cryptography dependency and includes the Python server plus the setup page's HTML, CSS and JavaScript.
 
-1. Keep the existing `TORBOX_API_KEY` environment value. No DMM token is required.
+1. Save a persistent Fernet key in Render as `CONFIG_SECRET`. Generate it once and retain it across redeployments. Changing it invalidates personal links.
 2. Deploy the latest commit from `main`.
-3. Check `/health`: version `2.0.1`, provider list `torbox`, and `torbox.configured: true`.
-4. Search a title and inspect `/health` for per-index success/errors and cached-file counts.
-5. In Nuvio, install or refresh `https://dmm-plus.onrender.com/manifest.json`. Select **TorBox Plus**. The original **DMM Cast for TorBox** entry is a different add-on.
+3. Check `/health`: version `3.0.0`, `personalLinksEnabled: true`.
+4. Open `/configure`, enter your own TorBox API key, and copy the personal manifest URL into Nuvio.
+5. Share only `https://dmm-plus.onrender.com/configure` with friends. Every person uses their own key.
 
-Render automatically supplies `PORT` and `RENDER_EXTERNAL_URL`. Public playback links are signed and expire. Viewer IP is used when choosing TorBox's CDN; minted links are cached separately by viewer.
+The bare manifest no longer grants the server owner's streams. Existing bare-URL installations must be migrated to a personal link. `TORBOX_API_KEY` is not used as a public-account fallback.
 
-Knaben and Peerflix are independent public indexes. Search results are filtered to cached playable TorBox files. Neither index receives the TorBox key. A source outage is reported and the other source can still provide results. Empty searches have a short cache lifetime to allow recovery.
+Render provides `PORT` and `RENDER_EXTERNAL_URL` automatically. No account database or persistent disk is needed: personal URLs contain authenticated encrypted configuration. In-memory instances are bounded and caches are tenant-specific. Application access logs redact config and playback tokens. Keep personal links private because they grant access through this add-on.
 
-Optional preferences: `PREFER_ENGLISH=true`, `HIDE_CAM=false`, `MAX_FILE_SIZE_GB=0`, and `TORBOX_MAX_STREAMS=100` (maximum 200). The free Render instance can sleep when idle, delaying its first request.
+The setup form validates keys only against TorBox, limits request size, rate-limits attempts, and rejects cross-origin form submissions. Page assets contain no credentials. API keys never go to Peerflix or Knaben. Optional preferences are encrypted into each install link.
+
+Viewer IP is passed to TorBox when selecting the CDN. Successful playback URLs are cached separately per account, file and viewer. The free Render instance can sleep when idle, delaying initial requests.
