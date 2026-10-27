@@ -1,90 +1,41 @@
-# DMM Plus
+# DMM Plus 1.1
 
-Stremio/Nuvio addon that **wraps Debrid Media Manager's TorBox cast addon** and
-merges it with independent scrapers, so a title returns ~40 streams instead of 5.
+Stremio/Nuvio stream add-on combining DMM Cast, independent cached TorBox torrent search, and the existing hoster providers. Python standard library only.
 
-```
-DMM Cast TB          5 file entries + 1 "cast" entry   (hard cap, no query param)
-CHQ                  up to 20
-PrimeSrc             up to 20
-2Embed               3–6
-MultiEmbed           1
-VidSrc               0 on bot-gated networks
---------------------------------------
-merged               40–45, deduped, quality-sorted
-```
+## What fixes the five-result problem
 
-Verified on this box:
+DMM Cast limits shared results upstream. This add-on does not change that limit. With `TORBOX_API_KEY` configured, it separately searches Torrentio, checks the results against TorBox's cache, and offers up to 100 cached file entries under `TorBox`.
 
-| title | streams |
-|---|---|
-| `tt0137523` (movie) | **45** — DMM 6, CHQ 15, PrimeSrc 20, 2Embed 3, MultiEmbed 1 |
-| `tt0944947:1:1` (series) | **40** — DMM 6, CHQ 10, PrimeSrc 20, 2Embed 3, MultiEmbed 1 |
+The search index receives the IMDb id, never the TorBox key. The key stays on the server and is sent only to TorBox. Streams use expiring signed playback paths. Listing results does not add torrents. Selecting a TorBox stream performs a cache-only add, maps the exact filename to TorBox's own file id, then redirects the player to the download link. A cached torrent added for playback remains in your TorBox library.
 
-## Why 5 was the ceiling
-
-DMM's addon answers with a fixed 5 file entries plus a "Cast a file inside a
-torrent" entry. `?limit=`, `?count=`, `?page=`, `?all=`, `?n=` are all ignored —
-the response is byte-identical. There is no pagination and no catalog to walk
-(`/catalog/movie/tb-casted-movies.json` returns `{"metas":[]}`). The only route
-past five is to answer the Stremio request yourself, which is what this does.
+Counts vary with index coverage and cache availability. This is independent search, not a complete export of DMM's website results. Hoster results may include embed pages and are not guaranteed to play in every client.
 
 ## Run
 
-```bash
-python addon.py
-# add http://<this-pc>:7100/manifest.json to Stremio / Nuvio
-```
+Set `DMM_TOKEN` and `TORBOX_API_KEY` in your environment, then run `python addon.py`. Install `http://localhost:7100/manifest.json` for local use. On Render, keep the existing HTTPS manifest URL.
 
-Windows: `run.bat`.
+## Configuration
 
-## Config (env vars)
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DMM_TOKEN` | unset | Cast token from your DMM TorBox manifest; preserves existing Cast results |
+| `TORBOX_API_KEY` | unset | TorBox account key; enables independent cached torrent results |
+| `TORBOX_MAX_STREAMS` | `100` | Maximum independent TorBox entries, separate from the hoster budget |
+| `TORBOX_MAX_CANDIDATES` | `300` | Maximum index candidates checked, bounded to 1,000 |
+| `TORRENT_SEARCH_URL` | `https://torrentio.strem.fun` | HTTPS base of the torrent search add-on |
+| `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Public origin for signed playback links; Render supplies its URL automatically |
+| `PORT` | `7100` | HTTP port; Render overrides it |
+| `MAX_STREAMS` | `60` | Combined budget for existing DMM/hoster results |
+| `PROVIDER_TIMEOUT` | `14` | Network-call timeout in seconds |
+| `SOFT_DEADLINE` | `14` | Aggregation response budget in seconds |
+| `CACHE_TTL` | `180` | Result-cache lifetime in seconds |
+| `TMDB_API_KEY` | unset | Optional metadata fallback; Cinemeta provides the normal key-free mapping |
+| `DISABLED_PROVIDERS` | unset | Comma-separated provider names: dmm,torbox,chq,primesrc,twoembed,multiembed,vidsrc |
 
-| Var | Default | Meaning |
-|---|---|---|
-| `PORT` | `7100` | listen port (7000 is used by the UKTurks addon) |
-| `DMM_TOKEN` | `_oKCkbeH_FFa` | the segment after `/api/stremio-tb/` in your DMM addon URL |
-| `TMDB_API_KEY` | app's key | override if rate-limited |
-| `PROVIDER_TIMEOUT` | `14` | per-provider network ceiling (seconds) |
-| `SOFT_DEADLINE` | `8` | how long the merge waits before answering with what it has |
-| `MAX_STREAMS` | `60` | hard cap on the merged list |
-| `CACHE_TTL` | `180` | per-title cache, short because signed URLs expire |
-| `DISABLED_PROVIDERS` | — | e.g. `vidsrc,multiembed` |
+## Verification
 
-To use **your own** DMM library: find your addon URL in DMM → Cast → Stremio
-addon, copy the token segment, then
+`GET /health` reports the version, enabled providers and the TorBox provider's last status/count, without keys. `GET /stream/movie/{imdb}.json` returns movie streams; series use `/stream/series/{imdb}:{season}:{episode}.json`.
 
-```powershell
-$env:DMM_TOKEN="your_token_here"; python addon.py
-```
+Run regression tests with `python -m unittest discover -s tests -v`. Tests cover more than five cached entries, no additions during discovery, expired/tampered playback links, correct TorBox file IDs, series matching, cache disappearance, provider failure isolation, and bounded aggregation waits.
 
-## Behaviour
-
-- **DMM entries pass through verbatim** — name, title, url, externalUrl,
-  `behaviorHints.bingeGroup`, play paths and their `h=` signature intact. This
-  addon never rewrites a `/play/` URL; DMM's signature check would break it.
-- **IMDb → TMDB** is resolved once per title via `/find?external_source=imdb_id`,
-  cached. CHQ, PrimeSrc, 2Embed and MultiEmbed all key on the numeric TMDB id;
-  DMM keys on IMDb.
-- **Dedupe** on playable URL, then `infoHash`, then `externalUrl` — the same
-  release surfacing from DMM and CHQ collapses to the DMM entry (it keeps the
-  higher-priority slot).
-- **Sort**: quality bucket first (4K → 1080p → 720p → …), then playable before
-  metadata-only, then **smaller file first**. A 100 GB remux is not better than
-  a 12 GB 1080p encode when it has to stream over wifi.
-- **Download-only mirrors filtered** — CHQ returns `10gbps`, `pixeldrain` and
-  `hubcloud.ist` links that stall every player. Dropped before they reach the
-  list.
-- **Failures are isolated.** A dead provider returns `[]`; the merge answers with
-  whatever arrived before `SOFT_DEADLINE`. Nothing hangs.
-- **No proxy hop.** URLs go to the player directly with per-host headers, so
-  Referer-gated hosts behave the same as they do in the app.
-
-## Files
-
-```
-addon.py     everything: http, 6 providers, merge, HTTP server
-run.bat      windows launcher
-```
-
-Stdlib only — no pip step. Python 3.9+.
+Upstream documentation: [TorBox API](https://api-docs.torbox.app/), [Torrentio source](https://github.com/TheBeastLT/torrentio-scraper), [DMM source](https://github.com/debridmediamanager/debrid-media-manager).

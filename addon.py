@@ -1,21 +1,7 @@
-"""DMM Plus â€” Debrid Media Manager streams + UKTurks providers in one addon.
+"""DMM Cast, independent cache-only TorBox search, and hoster aggregation.
 
-Why this exists: the DMM Cast for TorBox addon returns at most 5 file entries
-per title (it appends a "cast" entry on top, so 6 total). There is no query
-parameter that raises that ceiling â€” `?limit`, `?count`, `?page`, `?all` are all
-ignored. The only way past five is to answer the Stremio request yourself and
-merge DMM's five with independent sources.
-
-Routes
-    /manifest.json
-    /stream/movie/{imdb}.json
-    /stream/series/{imdb}:{season}:{episode}.json
-
-Everything is stdlib. No requests, no aiohttp.
-
-    python addon.py
-    # DMM token defaults to the one in config below; override with
-    #   set DMM_TOKEN=<token>   (the segment after /stremio-tb/)
+Set DMM_TOKEN and TORBOX_API_KEY in the environment, then run python addon.py.
+Independent TorBox results do not depend on the upstream Cast stream budget.
 """
 
 import concurrent.futures
@@ -31,6 +17,8 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from torbox_provider import InvalidPlayLink, ProviderError, TorBoxProvider, quality as release_quality
+
 # --------------------------------------------------------------------------
 # config
 # --------------------------------------------------------------------------
@@ -38,15 +26,24 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "7100"))
 
-DMM_TOKEN = os.environ.get("DMM_TOKEN", "_oKCkbeH_FFa")
+DMM_TOKEN = os.environ.get("DMM_TOKEN", "").strip()
 DMM_BASE = f"https://debridmediamanager.com/api/stremio-tb/{DMM_TOKEN}"
 
-TMDB_KEY = os.environ.get("TMDB_API_KEY", "f090bb54758cabf231fb605d3e3e0468")
+TMDB_KEY = os.environ.get("TMDB_API_KEY", "").strip()
 
 PROVIDER_TIMEOUT = float(os.environ.get("PROVIDER_TIMEOUT", "14"))
 SOFT_DEADLINE = float(os.environ.get("SOFT_DEADLINE", "14"))
 CACHE_TTL = int(os.environ.get("CACHE_TTL", "180"))
 MAX_STREAMS = int(os.environ.get("MAX_STREAMS", "60"))
+TORBOX_API_KEY = os.environ.get("TORBOX_API_KEY", "").strip()
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/")
+TORBOX_MAX_STREAMS = max(1, min(200, int(os.environ.get("TORBOX_MAX_STREAMS", "100"))))
+TORBOX = TorBoxProvider(
+    TORBOX_API_KEY, timeout=PROVIDER_TIMEOUT, deadline=SOFT_DEADLINE,
+    max_candidates=int(os.environ.get("TORBOX_MAX_CANDIDATES", "300")),
+    search_base=os.environ.get("TORRENT_SEARCH_URL", "https://torrentio.strem.fun"),
+    public_base=PUBLIC_BASE_URL,
+)
 DISABLED = {
     p.strip().lower()
     for p in os.environ.get("DISABLED_PROVIDERS", "").split(",")
@@ -120,12 +117,15 @@ def origin(url):
 # helpers shared by providers
 # --------------------------------------------------------------------------
 
-QUALITY_ORDER = ["4K", "1080p", "720p", "480p", "360p", "Auto"]
+QUALITY_ORDER = ["4K", "1440p", "1080p", "720p", "576p", "480p", "360p", "Auto"]
 
 
 def quality_from(text):
+    resolved = release_quality(text)
+    if resolved != "Auto":
+        return resolved
     t = (text or "").lower()
-    if "2160" in t or "4k" in t or "uhd" in t:
+    if "2160" in t or re.search(r"\b(?:4k|uhd)\b", t):
         return "4K"
     if "1080" in t or "fhd" in t:
         return "1080p"
@@ -159,6 +159,8 @@ def norm(tmdb, media_type, season, episode):
 
 
 def dmm(imdb_id, media_type, season, episode):
+    if not DMM_TOKEN:
+        return []
     if media_type == "tv":
         path = f"/stream/series/{imdb_id}:{season}:{episode}.json"
     else:
@@ -186,6 +188,8 @@ def dmm(imdb_id, media_type, season, episode):
             entry["behaviorHints"] = s["behaviorHints"]
         if s.get("infoHash"):
             entry["infoHash"] = s["infoHash"]
+        if "fileIdx" in s:
+            entry["fileIdx"] = s["fileIdx"]
         out.append(entry)
     return out
 
@@ -453,6 +457,18 @@ def vidsrc(tmdb, media_type, season, episode):
 
 def tmdb_from_imdb(imdb_id, media_type):
     """IMDb -> TMDB numeric id. The hosters key on TMDB, DMM keys on IMDb."""
+    kind_slug = "series" if media_type == "tv" else "movie"
+    ok, text, _ = http(f"https://v3-cinemeta.strem.io/meta/{kind_slug}/{imdb_id}.json",
+                       timeout=PROVIDER_TIMEOUT)
+    if ok:
+        try:
+            value = json.loads(text).get("meta", {}).get("moviedb_id")
+            if value is not None and str(value).isdigit() and int(value) > 0:
+                return int(value)
+        except (ValueError, AttributeError, TypeError):
+            pass
+    if not TMDB_KEY:
+        return None
     kind = "tv_results" if media_type == "tv" else "movie_results"
     ok, text, _ = http(
         "https://api.themoviedb.org/3/find/"
@@ -470,6 +486,7 @@ def tmdb_from_imdb(imdb_id, media_type):
 
 PROVIDERS = {
     "dmm": dmm,
+    "torbox": TORBOX.streams,
     "chq": chq,
     "primesrc": primesrc,
     "twoembed": twoembed,
@@ -483,6 +500,8 @@ PROVIDERS = {
 
 _cache = {}
 _cache_lock = threading.Lock()
+_provider_pool = concurrent.futures.ThreadPoolExecutor(max_workers=16, thread_name_prefix="provider")
+_metadata_pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="metadata")
 
 
 def cache_get(key):
@@ -526,30 +545,52 @@ def collect(imdb_id, media_type, season, episode):
     if cached is not None:
         return cached
 
-    tmdb = cache_get(("tmdb", imdb_id, media_type))
-    if tmdb is None:
-        tmdb = tmdb_from_imdb(imdb_id, media_type)
-        if tmdb:
-            cache_put(("tmdb", imdb_id, media_type), tmdb)
-
+    deadline = time.monotonic() + SOFT_DEADLINE
     jobs = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        for name, fn in PROVIDERS.items():
-            if name in DISABLED:
-                continue
-            if name == "dmm":
-                jobs[name] = pool.submit(fn, imdb_id, media_type, season, episode)
-            elif tmdb:
-                jobs[name] = pool.submit(fn, tmdb, media_type, season, episode)
 
-        deadline = time.time() + SOFT_DEADLINE
-        merged = []
-        for name, fut in jobs.items():
-            remaining = max(0.0, deadline - time.time())
-            try:
-                merged.extend(fut.result(timeout=remaining) or [])
-            except Exception:
-                continue
+    def lookup_tmdb():
+        tmdb = cache_get(("tmdb", imdb_id, media_type))
+        if tmdb is None:
+            tmdb = tmdb_from_imdb(imdb_id, media_type)
+            if tmdb:
+                cache_put(("tmdb", imdb_id, media_type), tmdb)
+        return tmdb
+
+    # Direct IMDb providers start immediately, even if metadata is unavailable.
+    metadata = _metadata_pool.submit(lookup_tmdb)
+
+    def with_tmdb(fn):
+        tmdb = metadata.result(timeout=max(0, deadline - time.monotonic()))
+        if not tmdb or time.monotonic() >= deadline:
+            return []
+        return fn(tmdb, media_type, season, episode)
+
+    for name, fn in PROVIDERS.items():
+        if name in DISABLED or (name == "torbox" and not TORBOX_API_KEY):
+            continue
+        jobs[name] = (_provider_pool.submit(fn, imdb_id, media_type, season, episode)
+                      if name in ("dmm", "torbox") else _provider_pool.submit(with_tmdb, fn))
+
+    if jobs:
+        concurrent.futures.wait(jobs.values(), timeout=max(0, deadline - time.monotonic()))
+    merged = []
+    # Gather every completed job; a slow earlier provider must not hide later ones.
+    for name, future in jobs.items():
+        if not future.done():
+            future.cancel()
+            sys.stderr.write("provider %s: deadline_exceeded\n" % name)
+            continue
+        try:
+            rows = future.result() or []
+            if name == "torbox":
+                rows = rows[:TORBOX_MAX_STREAMS]
+            merged.extend(rows)
+            sys.stderr.write("provider %s: %d results\n" % (name, len(rows)))
+        except Exception as exc:
+            # API credentials and upstream URLs must never appear in logs.
+            detail = str(exc) if isinstance(exc, ProviderError) else type(exc).__name__
+            sys.stderr.write("provider %s: %s\n" % (name, detail))
+    metadata.cancel()
 
     # Dedupe on the playable URL; DMM entries also carry infoHash.
     seen = set()
@@ -564,7 +605,12 @@ def collect(imdb_id, media_type, season, episode):
         deduped.append(s)
 
     deduped.sort(key=rank)
-    capped = deduped[:MAX_STREAMS]
+    # Direct TorBox results have their own budget, so a hoster's twenty embed
+    # pages cannot crowd the additional cached torrent choices out of the list.
+    direct = [s for s in deduped if s.get("source") == "TorBox"][:TORBOX_MAX_STREAMS]
+    others = [s for s in deduped if s.get("source") != "TorBox"][:MAX_STREAMS]
+    capped = direct + others
+    capped.sort(key=rank)
     cache_put(key, capped)
     return capped
 
@@ -575,11 +621,11 @@ def collect(imdb_id, media_type, season, episode):
 
 MANIFEST = {
     "id": "org.dmmplus.aggregator",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "name": "DMM Plus",
     "description": (
-        "Debrid Media Manager's own results (no 5-entry cap on the merge) plus "
-        "CHQ, PrimeSrc, 2Embed, MultiEmbed and VidSrc."
+        "DMM Cast plus independent TorBox cached torrent search when configured, "
+        "CHQ, PrimeSrc, 2Embed, MultiEmbed and VidSrc. DMM Cast's upstream limit still applies."
     ),
     "logo": "https://static.debridmediamanager.com/dmmcast.png",
     "resources": ["stream"],
@@ -606,6 +652,9 @@ class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
+        if self.path.startswith("/torbox/play/"):
+            sys.stderr.write("%s TorBox playback request\n" % self.address_string())
+            return
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
 
     def send_json(self, obj, status=200):
@@ -628,6 +677,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.urlparse(self.path).path.rstrip("/")
 
+        if path.startswith("/torbox/play/"):
+            if not TORBOX_API_KEY:
+                return self.send_json({"error": "TorBox is not configured"}, 503)
+            try:
+                link = TORBOX.resolve(path[len("/torbox/play/"):])
+            except InvalidPlayLink:
+                return self.send_json({"error": "Play link expired or invalid; refresh the stream list"}, 410)
+            except ProviderError as exc:
+                return self.send_json({"error": str(exc)}, 503)
+            except Exception as exc:
+                sys.stderr.write("TorBox playback: %s\n" % type(exc).__name__)
+                return self.send_json({"error": "TorBox playback unavailable"}, 503)
+            self.send_response(302)
+            self.send_header("Location", link)
+            self.send_header("Content-Length", "0")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            return
+
         if path in ("", "/", "/index"):
             return self.send_json({
                 "name": MANIFEST["name"],
@@ -640,9 +709,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(MANIFEST)
 
         if path in ("/health", "/healthz"):
-            return self.send_json({"status": "ok", "providers": [
-                p for p in PROVIDERS if p not in DISABLED
-            ]})
+            return self.send_json({"status": "ok", "version": MANIFEST["version"], "providers": [
+                p for p in PROVIDERS if p not in DISABLED and (p != "torbox" or TORBOX_API_KEY)
+            ], "torbox": {"configured": bool(TORBOX_API_KEY), "lastStatus": TORBOX.last_status,
+                          "lastCount": TORBOX.last_count, "lastChecked": TORBOX.last_checked}})
 
         m = re.match(r"^/stream/(movie|series)/(.+)\.json$", path)
         if not m:
@@ -654,10 +724,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if media_type == "tv":
             parts = ident.split(":")
-            if len(parts) >= 3:
+            if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
                 ident, season, episode = parts[0], int(parts[1]), int(parts[2])
             else:
                 return self.send_json({"streams": []})
+
+        if not re.fullmatch(r"tt\d{5,12}", ident):
+            return self.send_json({"streams": []}, 400)
 
         try:
             streams = collect(ident, media_type, season, episode)
@@ -665,7 +738,19 @@ class Handler(BaseHTTPRequestHandler):
             sys.stderr.write("collect failed: %r\n" % (exc,))
             streams = []
 
-        return self.send_json({"streams": streams})
+        # Relative signed play links are made absolute per request, outside the
+        # shared cache. Render supplies RENDER_EXTERNAL_URL automatically.
+        host = self.headers.get("Host", "")
+        if not re.fullmatch(r"[A-Za-z0-9.\-\[\]:]+", host):
+            return self.send_json({"error": "Invalid host"}, 400)
+        scheme = "https" if self.headers.get("X-Forwarded-Proto", "").split(",")[0].strip() == "https" else "http"
+        base = PUBLIC_BASE_URL or f"{scheme}://{host}"
+        result = []
+        for stream in streams:
+            if str(stream.get("url", "")).startswith("/torbox/play/"):
+                stream = dict(stream, url=base + stream["url"])
+            result.append(stream)
+        return self.send_json({"streams": result})
 
 
 def main():
@@ -673,9 +758,11 @@ def main():
     sys.stderr.write(
         "DMM Plus on http://%s:%d/manifest.json\n"
         "  dmm token : %s\n"
+        "  torbox    : %s\n"
         "  providers : %s\n"
         "  max streams: %d\n"
-        % (HOST, PORT, DMM_TOKEN,
+        % (HOST, PORT, "configured" if DMM_TOKEN else "not configured",
+           "configured" if TORBOX_API_KEY else "not configured",
            ", ".join(p for p in PROVIDERS if p not in DISABLED), MAX_STREAMS)
     )
     try:

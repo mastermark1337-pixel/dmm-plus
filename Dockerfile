@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # Stdlib only — no pip install step, no build deps, ~60 MB image.
-COPY addon.py ./
+COPY addon.py torbox_provider.py ./
 
 # Non-root: this process makes outbound calls only, never writes to disk.
 RUN useradd --create-home --uid 10001 app && chown -R app:app /app
