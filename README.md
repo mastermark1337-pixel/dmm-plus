@@ -1,10 +1,10 @@
-# DMM Plus 1.1
+# DMM Plus 1.1.1
 
 Stremio/Nuvio stream add-on combining DMM Cast, independent cached TorBox torrent search, and the existing hoster providers. Python standard library only.
 
 ## What fixes the five-result problem
 
-DMM Cast limits shared results upstream. This add-on does not change that limit. With `TORBOX_API_KEY` configured, it separately searches Torrentio, checks the results against TorBox's cache, and offers up to 100 cached file entries under `TorBox`.
+DMM Cast limits shared results upstream. This add-on does not change that limit. With `TORBOX_API_KEY` configured, it separately searches Peerflix, checks the results against TorBox's cache, and offers up to 100 cached file entries under `TorBox`.
 
 The search index receives the IMDb id, never the TorBox key. The key stays on the server and is sent only to TorBox. Streams use expiring signed playback paths. Listing results does not add torrents. Selecting a TorBox stream performs a cache-only add, maps the exact filename to TorBox's own file id, then redirects the player to the download link. A cached torrent added for playback remains in your TorBox library.
 
@@ -22,7 +22,7 @@ Set `DMM_TOKEN` and `TORBOX_API_KEY` in your environment, then run `python addon
 | `TORBOX_API_KEY` | unset | TorBox account key; enables independent cached torrent results |
 | `TORBOX_MAX_STREAMS` | `100` | Maximum independent TorBox entries, separate from the hoster budget |
 | `TORBOX_MAX_CANDIDATES` | `300` | Maximum index candidates checked, bounded to 1,000 |
-| `TORRENT_SEARCH_URL` | `https://torrentio.strem.fun` | HTTPS base of the torrent search add-on |
+| `TORRENT_SEARCH_URL` | `https://addon.peerflix.mov` | HTTPS base of the torrent search add-on |
 | `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Public origin for signed playback links; Render supplies its URL automatically |
 | `PORT` | `7100` | HTTP port; Render overrides it |
 | `MAX_STREAMS` | `60` | Combined budget for existing DMM/hoster results |
@@ -39,3 +39,4 @@ Set `DMM_TOKEN` and `TORBOX_API_KEY` in your environment, then run `python addon
 Run regression tests with `python -m unittest discover -s tests -v`. Tests cover more than five cached entries, no additions during discovery, expired/tampered playback links, correct TorBox file IDs, series matching, cache disappearance, provider failure isolation, and bounded aggregation waits.
 
 Upstream documentation: [TorBox API](https://api-docs.torbox.app/), [Torrentio source](https://github.com/TheBeastLT/torrentio-scraper), [DMM source](https://github.com/debridmediamanager/debrid-media-manager).
+

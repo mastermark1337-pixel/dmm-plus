@@ -41,7 +41,7 @@ TORBOX_MAX_STREAMS = max(1, min(200, int(os.environ.get("TORBOX_MAX_STREAMS", "1
 TORBOX = TorBoxProvider(
     TORBOX_API_KEY, timeout=PROVIDER_TIMEOUT, deadline=SOFT_DEADLINE,
     max_candidates=int(os.environ.get("TORBOX_MAX_CANDIDATES", "300")),
-    search_base=os.environ.get("TORRENT_SEARCH_URL", "https://torrentio.strem.fun"),
+    search_base=os.environ.get("TORRENT_SEARCH_URL", "https://addon.peerflix.mov"),
     public_base=PUBLIC_BASE_URL,
 )
 DISABLED = {
@@ -621,7 +621,7 @@ def collect(imdb_id, media_type, season, episode):
 
 MANIFEST = {
     "id": "org.dmmplus.aggregator",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "name": "DMM Plus",
     "description": (
         "DMM Cast plus independent TorBox cached torrent search when configured, "

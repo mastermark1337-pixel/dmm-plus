@@ -77,7 +77,7 @@ def select_file(files, target="", season=None, episode=None):
 
 class TorBoxProvider:
     def __init__(self, api_key, *, timeout=10, deadline=14, max_candidates=300,
-                 search_base="https://torrentio.strem.fun", public_base=""):
+                 search_base="https://addon.peerflix.mov", public_base=""):
         self.api_key = api_key.strip()
         self.timeout = max(1, float(timeout))
         self.deadline = max(1, float(deadline))
@@ -87,6 +87,7 @@ class TorBoxProvider:
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.query or parsed.fragment:
             raise ValueError("Torrent search base must be an HTTPS URL without credentials or a query")
         self.public_base = public_base.rstrip("/")
+        self.search_label = parsed.hostname
         self._sign_key = hashlib.sha256(("DMM-Plus-play:" + self.api_key).encode()).digest()
         self._lock = threading.Lock()
         self._play_lock = threading.Lock()
@@ -243,7 +244,7 @@ class TorBoxProvider:
                 q = quality(filename)
                 size_label = f" • {size / 1024**3:.2f} GB" if size else ""
                 out.append({"name": f"TorBox • {q}{size_label}",
-                            "title": basename(filename) + "\nTorBox cached • Torrentio search",
+                            "title": basename(filename) + "\nTorBox cached • " + self.search_label,
                             "url": self.public_base + self._play_path(infohash, filename, season, episode),
                             "source": "TorBox", "quality": q,
                             "behaviorHints": {"bingeGroup": "dmmplus-tb:" + infohash,
