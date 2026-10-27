@@ -43,7 +43,7 @@ def words(text):
 def release_tags(text):
     """Filename-derived labels; no guessed languages or codec properties."""
     text = str(text)
-    cam = bool(re.search(r"(?:^|[\W_])(?:cam|hdcam|hdts|hdtc|telesync|telecine|ts|tc)(?:[\W_]|$)", text, re.I))
+    cam = bool(re.search(r"(?:^|[\W_])(?:cam(?:rip)?|hdcam|hdts|hdtc|telesync|telecine|ts|tc)(?:[\W_]|$)", text, re.I))
     source = ("CAM/TS" if cam else "Blu-ray" if re.search(r"blu[ ._-]?ray|b[dr]rip|remux", text, re.I)
               else "WEB" if re.search(r"web[ ._-]?(?:dl|rip)|\bweb\b", text, re.I) else "")
     codec = "HEVC" if re.search(r"x265|h[ .]?265|hevc", text, re.I) else "H264" if re.search(r"x264|h[ .]?264|avc", text, re.I) else ""
@@ -67,6 +67,12 @@ def quality(text):
 
 def basename(name):
     return str(name).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
+def file_identity(name):
+    # Downloaded copies often acquire " (1)" before the extension. File size is
+    # checked separately, so different encodes are never merged by name alone.
+    return re.sub(r"\s*\([1-9]\d?\)(?=\.[a-z0-9]{2,5}$)", "", basename(name).casefold())
 
 
 def episode_matches(name, season, episode):
@@ -336,7 +342,7 @@ class TorBoxProvider:
                     continue
                 filename = selected["name"]
                 # The same exact file is often available under multiple hashes.
-                identity = (basename(filename).casefold(), selected.get("size"))
+                identity = (file_identity(filename), selected.get("size"))
                 if identity in emitted:
                     continue
                 emitted.add(identity)

@@ -4,7 +4,7 @@ The Docker service builds `addon.py` and `torbox_provider.py` from this reposito
 
 1. Keep the existing `TORBOX_API_KEY` environment value. No DMM token is required.
 2. Deploy the latest commit from `main`.
-3. Check `/health`: version `2.0.0`, provider list `torbox`, and `torbox.configured: true`.
+3. Check `/health`: version `2.0.1`, provider list `torbox`, and `torbox.configured: true`.
 4. Search a title and inspect `/health` for per-index success/errors and cached-file counts.
 5. In Nuvio, install or refresh `https://dmm-plus.onrender.com/manifest.json`. Select **TorBox Plus**. The original **DMM Cast for TorBox** entry is a different add-on.
 

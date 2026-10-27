@@ -1,4 +1,4 @@
-# TorBox Plus 2.0
+# TorBox Plus 2.0.1
 
 Independent Nuvio/Stremio add-on using your TorBox account. It queries Peerflix and Knaben, verifies matching files against TorBox cache, removes duplicates, and returns signed playback links. It does not call DMM Cast and has no five-result limit.
 

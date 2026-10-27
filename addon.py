@@ -16,7 +16,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from torbox_provider import (InvalidPlayLink, ProviderError, TorBoxProvider,
-                             basename, release_tags, quality as release_quality)
+                             basename, file_identity, release_tags, quality as release_quality)
 
 # --------------------------------------------------------------------------
 # config
@@ -142,7 +142,7 @@ def dedupe_streams(merged):
     seen_hashes, seen_files, seen_urls, out = set(), set(), set(), []
     # Prefer a cache-verified direct TorBox link when the same file is cast too.
     for stream in sorted(merged, key=lambda s: 0 if s.get("source") == "TorBox" else 1):
-        filename = basename(stream.get("_filename", "")).casefold()
+        filename = file_identity(stream.get("_filename", ""))
         infohash = stream.get("_torrentHash") or stream.get("infoHash")
         hash_key = (infohash, filename or stream.get("fileIdx")) if infohash else None
         file_key = (filename, stream.get("_bytes")) if filename and stream.get("_bytes") else None
@@ -213,7 +213,7 @@ def collect(imdb_id, media_type, season, episode):
 
 MANIFEST = {
     "id": "org.dmmplus.aggregator",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "name": "TorBox Plus",
     "description": (
         "Independent cached TorBox streams from Peerflix and Knaben. "

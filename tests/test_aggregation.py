@@ -54,6 +54,13 @@ class AggregationTests(unittest.TestCase):
             result = addon.dedupe_streams(rows)
         self.assertEqual([s['url'] for s in result], ['https://example.com/ok'])
 
+    def test_camrip_is_identified_and_duplicate_copy_suffix_is_removed(self):
+        self.assertTrue(addon.release_tags('Movie.1080p.CAMRip.ENG.mkv')['cam'])
+        rows = [{'url': '/a', '_filename': 'Movie.1080p.mkv', '_bytes': 2000},
+                {'url': '/b', '_filename': 'Movie.1080p (1).mkv', '_bytes': 2000},
+                {'url': '/c', '_filename': 'Movie.1080p (1).mkv', '_bytes': 3000}]
+        self.assertEqual(len(addon.dedupe_streams(rows)), 2)
+
 
 if __name__ == '__main__':
     unittest.main()
