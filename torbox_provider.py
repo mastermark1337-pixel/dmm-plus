@@ -6,6 +6,7 @@ cache-only add and maps filenames to TorBox's own file IDs.
 """
 
 import base64
+import concurrent.futures
 import hashlib
 import hmac
 import ipaddress
@@ -17,6 +18,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import unicodedata
 
 
 class ProviderError(Exception):
@@ -30,7 +32,27 @@ class InvalidPlayLink(ProviderError):
 VIDEO = re.compile(r"\.(?:mkv|mp4|avi|m4v|mov|ts|m2ts|webm)$", re.I)
 SUPPLEMENT = re.compile(r"(?:^|[\W_])(?:sample|trailer|extras?|featurettes?|bonus)(?:[\W_]|$)", re.I)
 HASH = re.compile(r"^[a-f0-9]{40}$")
-UA = "DMM-Plus/1.1"
+UA = "DMM-Plus/1.3"
+
+
+def words(text):
+    text = unicodedata.normalize("NFKD", str(text)).casefold()
+    return re.findall(r"[a-z0-9]+", "".join(c for c in text if not unicodedata.combining(c)))
+
+
+def release_tags(text):
+    """Filename-derived labels; no guessed languages or codec properties."""
+    text = str(text)
+    cam = bool(re.search(r"(?:^|[\W_])(?:cam|hdcam|hdts|hdtc|telesync|telecine|ts|tc)(?:[\W_]|$)", text, re.I))
+    source = ("CAM/TS" if cam else "Blu-ray" if re.search(r"blu[ ._-]?ray|b[dr]rip|remux", text, re.I)
+              else "WEB" if re.search(r"web[ ._-]?(?:dl|rip)|\bweb\b", text, re.I) else "")
+    codec = "HEVC" if re.search(r"x265|h[ .]?265|hevc", text, re.I) else "H264" if re.search(r"x264|h[ .]?264|avc", text, re.I) else ""
+    hdr = "Dolby Vision" if re.search(r"(?:^|[\W_])(?:dovi|dv)(?:[\W_]|$)", text, re.I) else "HDR" if re.search(r"hdr", text, re.I) else ""
+    english = bool(re.search(r"(?:^|[\W_])(?:english|eng|en)(?:[\W_]|$)|🇬🇧|🇺🇸", text, re.I))
+    foreign = bool(re.search(r"(?:^|[\W_])(?:russian|rus|ru|ukrainian|ukr|hindi|hin|tamil|dubbed|dublado|latino)(?:[\W_]|$)|🇷🇺|🇺🇦", text, re.I))
+    language = "English" if english else "Multi audio" if re.search(r"(?:^|[\W_])multi(?:[\W_]|$)", text, re.I) else ""
+    return {"cam": cam, "languageRank": 0 if english else 2 if foreign else 1,
+            "labels": [s for s in (source, codec, hdr, language) if s]}
 
 
 def quality(text):
@@ -49,8 +71,8 @@ def basename(name):
 
 def episode_matches(name, season, episode):
     name = basename(name)
-    pairs = re.findall(r"\bs(\d{1,3})[ ._-]*e(\d{1,4})(?!\d)", name, re.I)
-    pairs += re.findall(r"\b(\d{1,3})x(\d{1,4})(?!\d)", name, re.I)
+    pairs = re.findall(r"(?<![a-z0-9])s(\d{1,3})[ ._-]*e(\d{1,4})(?!\d)", name, re.I)
+    pairs += re.findall(r"(?<![a-z0-9])(\d{1,3})x(\d{1,4})(?!\d)", name, re.I)
     return (int(season), int(episode)) in {(int(s), int(e)) for s, e in pairs}
 
 
@@ -78,7 +100,7 @@ def select_file(files, target="", season=None, episode=None):
 
 class TorBoxProvider:
     def __init__(self, api_key, *, timeout=10, deadline=14, max_candidates=300,
-                 search_base="https://addon.peerflix.mov", public_base=""):
+                 search_base="https://addon.peerflix.mov", public_base="", enable_knaben=True):
         self.api_key = api_key.strip()
         self.timeout = max(1, float(timeout))
         self.deadline = max(1, float(deadline))
@@ -89,6 +111,9 @@ class TorBoxProvider:
             raise ValueError("Torrent search base must be an HTTPS URL without credentials or a query")
         self.public_base = public_base.rstrip("/")
         self.search_label = parsed.hostname
+        self.enable_knaben = bool(enable_knaben)
+        self._search_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="index")
+        self._metadata = {}
         self._sign_key = hashlib.sha256(("DMM-Plus-play:" + self.api_key).encode()).digest()
         self._lock = threading.Lock()
         self._play_lock = threading.Lock()
@@ -97,6 +122,89 @@ class TorBoxProvider:
         self.last_status = "ready" if self.api_key else "not_configured"
         self.last_count = 0
         self.last_checked = None
+        self.last_sources = {}
+
+    def _index_streams(self, imdb_id, media_type, season, episode, end):
+        kind = "series" if media_type == "tv" else "movie"
+        ident = f"{imdb_id}:{season}:{episode}" if kind == "series" else imdb_id
+        url = self.search_base + "/stream/" + kind + "/" + urllib.parse.quote(ident, safe=":") + ".json"
+        rows = self._request(url, end=end).get("streams", [])
+        if not isinstance(rows, list):
+            raise ProviderError("invalid_search_response")
+        return [dict(row, _index=self.search_label) for row in rows if isinstance(row, dict)]
+
+    def _knaben_streams(self, imdb_id, media_type, season, episode, end):
+        kind = "series" if media_type == "tv" else "movie"
+        key = (kind, imdb_id)
+        with self._lock:
+            hit = self._metadata.get(key)
+        if hit and hit[1] > time.monotonic():
+            meta = hit[0]
+        else:
+            meta = self._request(f"https://v3-cinemeta.strem.io/meta/{kind}/{imdb_id}.json", end=end).get("meta")
+            if not isinstance(meta, dict) or not meta.get("name") or meta.get("id") != imdb_id:
+                raise ProviderError("metadata_unavailable")
+            with self._lock:
+                if len(self._metadata) >= 512:
+                    self._metadata.pop(next(iter(self._metadata)))
+                self._metadata[key] = (meta, time.monotonic() + 86400)
+        title = meta["name"]
+        year = re.match(r"(?:19|20)\d{2}", str(meta.get("releaseInfo", "")))
+        if media_type == "movie" and not year:
+            raise ProviderError("metadata_year_unavailable")
+        query = title + (f" S{season:02d}" if media_type == "tv" else " " + year[0])
+        url = "https://api.knaben.org/v2/search?" + urllib.parse.urlencode({
+            "q": query, "sf": "title", "o": "seeders", "d": "desc", "s": min(300, self.max_candidates)})
+        payload = self._request(url, end=end)
+        hits = payload.get("hits", [])
+        if not isinstance(hits, list):
+            raise ProviderError("invalid_knaben_response")
+        required = words(title)
+        out = []
+        for hit in hits:
+            if not isinstance(hit, dict):
+                continue
+            release = str(hit.get("title", ""))
+            tokens = words(release)
+            # Search engines fuzzy-match; do not offer a different title/year.
+            if not required or not all(token in tokens for token in required):
+                continue
+            if media_type == "movie" and year[0] not in tokens:
+                continue
+            infohash = str(hit.get("hash", "")).lower()
+            if not HASH.fullmatch(infohash):
+                continue
+            out.append({"infoHash": infohash, "title": release, "_index": "Knaben"})
+        return out
+
+    def _search(self, imdb_id, media_type, season, episode, end):
+        if not self.enable_knaben:
+            rows = self._index_streams(imdb_id, media_type, season, episode, end)
+            self.last_sources = {self.search_label: {"status": "ok", "candidates": len(rows)}}
+            return rows
+        # Keep time for the cache check even when an index is slow or unavailable.
+        search_end = min(end - 2, time.monotonic() + min(7, self.deadline * 0.55))
+        jobs = {
+            self.search_label: self._search_pool.submit(self._index_streams, imdb_id, media_type, season, episode, search_end),
+            "Knaben": self._search_pool.submit(self._knaben_streams, imdb_id, media_type, season, episode, search_end),
+        }
+        concurrent.futures.wait(jobs.values(), timeout=max(0, search_end - time.monotonic()))
+        rows, statuses = [], {}
+        for name, future in jobs.items():
+            if not future.done():
+                future.cancel()
+                statuses[name] = {"status": "timeout", "candidates": 0}
+                continue
+            try:
+                found = future.result()
+                rows.extend(found)
+                statuses[name] = {"status": "ok", "candidates": len(found)}
+            except Exception as exc:
+                statuses[name] = {"status": str(exc) if isinstance(exc, ProviderError) else "unavailable", "candidates": 0}
+        self.last_sources = statuses
+        if not any(status["status"] == "ok" for status in statuses.values()):
+            raise ProviderError("all_search_sources_unavailable")
+        return rows
 
     def _request(self, url, *, data=None, headers=None, end=None, torbox=False):
         remaining = (end - time.monotonic()) if end is not None else self.timeout
@@ -194,13 +302,7 @@ class TorBoxProvider:
             return []
         end = time.monotonic() + self.deadline
         try:
-            kind = "series" if media_type == "tv" else "movie"
-            ident = f"{imdb_id}:{season}:{episode}" if kind == "series" else imdb_id
-            url = self.search_base + "/stream/" + kind + "/" + urllib.parse.quote(ident, safe=":") + ".json"
-            payload = self._request(url, end=end)
-            rows = payload.get("streams", [])
-            if not isinstance(rows, list):
-                raise ProviderError("invalid_search_response")
+            rows = self._search(imdb_id, media_type, season, episode, end)
             candidates, seen = [], set()
             for row in rows:
                 if not isinstance(row, dict):
@@ -233,7 +335,8 @@ class TorBoxProvider:
                 if not selected:
                     continue
                 filename = selected["name"]
-                identity = (infohash, filename.casefold())
+                # The same exact file is often available under multiple hashes.
+                identity = (basename(filename).casefold(), selected.get("size"))
                 if identity in emitted:
                     continue
                 emitted.add(identity)
@@ -243,11 +346,14 @@ class TorBoxProvider:
                 except (TypeError, ValueError, OverflowError):
                     size = 0
                 q = quality(filename)
+                tags = release_tags(filename)
                 size_label = f" • {size / 1024**3:.2f} GB" if size else ""
                 out.append({"name": f"TorBox • {q}{size_label}",
-                            "title": basename(filename) + "\nTorBox cached • " + self.search_label,
+                            "title": basename(filename) + ("\n" + " • ".join(tags["labels"]) if tags["labels"] else "") + "\nTorBox cached",
                             "url": self.public_base + self._play_path(infohash, filename, season, episode),
                             "source": "TorBox", "quality": q,
+                            "_torrentHash": infohash, "_filename": filename, "_bytes": size,
+                            "_cam": tags["cam"], "_languageRank": tags["languageRank"],
                             "behaviorHints": {"bingeGroup": "dmmplus-tb:" + infohash,
                                               "filename": basename(filename), "videoSize": size}})
             self.last_status, self.last_count = "ok", len(out)

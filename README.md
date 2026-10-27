@@ -1,41 +1,50 @@
-# DMM Plus 1.2.0
+# TorBox Plus 2.0
 
-Stremio/Nuvio stream add-on combining DMM Cast and independent cached TorBox torrent search. Python standard library only. UKTurks and the CHQ, PrimeSrc, 2Embed, MultiEmbed and VidSrc hosters are not queried; install UKTurks separately if wanted.
+Independent Nuvio/Stremio add-on using your TorBox account. It queries Peerflix and Knaben, verifies matching files against TorBox cache, removes duplicates, and returns signed playback links. It does not call DMM Cast and has no five-result limit.
 
-## What fixes the five-result problem
+## Install
 
-DMM Cast limits shared results upstream. This add-on does not change that limit. With `TORBOX_API_KEY` configured, it separately searches Peerflix, checks the results against TorBox's cache, and offers up to 100 cached file entries under `TorBox`.
+Add `https://dmm-plus.onrender.com/manifest.json` in Nuvio. The displayed add-on name is **TorBox Plus**. The existing URL and internal manifest ID are retained so previous DMM Plus installations can update. The original **DMM Cast for TorBox** is a separate add-on and retains its own limits.
 
-The search index receives the IMDb id, never the TorBox key. The key stays on the server and is sent only to TorBox. Streams use expiring signed playback paths. Listing results does not add torrents. Selecting a TorBox stream performs a cache-only add, maps the exact filename to TorBox's own file id, then redirects the player to the download link. A cached torrent added for playback remains in your TorBox library.
+## How results work
 
-Counts vary with index coverage and cache availability. This is independent search, not a complete export of DMM's website results.
+- Only cache-confirmed video files are offered. Browsing never adds a torrent.
+- Peerflix searches by IMDb id. Knaben searches using public Cinemeta metadata, verifies the title/year, and checks matching files against TorBox.
+- English-labelled releases are preferred; unknown language is kept, not guessed. CAM/TS releases are ranked below better copies within the language group. CAM entries stay visible by default for new titles.
+- Resolution, codec, HDR and release type labels come from the filename. File size comes from TorBox.
+- Identical filenames and byte sizes are deduplicated across hashes/indexes.
+- A TV pack is offered only if its cached file listing identifies the requested episode unambiguously. An index's file number is never treated as a TorBox file ID.
+- Selecting a result rechecks its cache status, performs a cache-only add, maps the actual TorBox file ID and redirects to a CDN chosen for the viewer. Added cached torrents remain in your TorBox library.
+- One index failure does not hide the other index. `/health` reports safe per-index status and candidate counts.
 
-## Run
-
-Set `DMM_TOKEN` and `TORBOX_API_KEY` in your environment, then run `python addon.py`. Install `http://localhost:7100/manifest.json` for local use. On Render, keep the existing HTTPS manifest URL.
+Counts depend on index coverage and what TorBox currently caches. There is no promise of a fixed count or a complete copy of any other service's search database.
 
 ## Configuration
 
+Only `TORBOX_API_KEY` is required. Save it in Render's environment, never in the repository. Indexes receive the title/IMDb identifier, never the account key. The key is sent exclusively to TorBox's API.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `DMM_TOKEN` | unset | Cast token from your DMM TorBox manifest; preserves existing Cast results |
-| `TORBOX_API_KEY` | unset | TorBox account key; enables independent cached torrent results |
-| `TORBOX_MAX_STREAMS` | `100` | Maximum independent TorBox entries, separate from the hoster budget |
-| `TORBOX_MAX_CANDIDATES` | `300` | Maximum index candidates checked, bounded to 1,000 |
-| `TORRENT_SEARCH_URL` | `https://addon.peerflix.mov` | HTTPS base of the torrent search add-on |
-| `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Public origin for signed playback links; Render supplies its URL automatically |
-| `PORT` | `7100` | HTTP port; Render overrides it |
-| `MAX_STREAMS` | `60` | Combined budget for DMM Cast results |
-| `PROVIDER_TIMEOUT` | `14` | Network-call timeout in seconds |
-| `SOFT_DEADLINE` | `14` | Aggregation response budget in seconds |
-| `CACHE_TTL` | `180` | Result-cache lifetime in seconds |
-| `TMDB_API_KEY` | unset | Optional metadata fallback; Cinemeta provides the normal key-free mapping |
-| `DISABLED_PROVIDERS` | unset | Comma-separated provider names: dmm,torbox |
+| `TORBOX_API_KEY` | unset | Your TorBox account key |
+| `TORBOX_MAX_STREAMS` | `100` | Maximum unique results per title, configurable up to 200 |
+| `TORBOX_MAX_CANDIDATES` | `300` | Index candidates checked, up to 1,000; Knaben returns up to 300 |
+| `PREFER_ENGLISH` | `true` | Prefer explicitly English-labelled releases |
+| `HIDE_CAM` | `false` | Exclude CAM/TS copies if enabled |
+| `MAX_FILE_SIZE_GB` | `0` | Optional size ceiling; zero means unlimited |
+| `KNABEN_ENABLED` | `true` | Enable the independent Knaben search |
+| `TORRENT_SEARCH_URL` | `https://addon.peerflix.mov` | Primary compatible HTTPS torrent index |
+| `PUBLIC_BASE_URL` | `RENDER_EXTERNAL_URL` | Public origin for signed playback links |
+| `PORT` | `7100` | HTTP port; supplied by Render |
+| `PROVIDER_TIMEOUT` | `14` | Per-call network timeout |
+| `SOFT_DEADLINE` | `14` | Response budget, including source fan-out and cache checks |
+| `CACHE_TTL` | `180` | Successful search cache lifetime; empty results expire within 10 seconds |
 
-## Verification
+`DMM_TOKEN` is no longer read or needed. UKTurks remains a separate add-on.
 
-`GET /health` reports the version, enabled providers and the TorBox provider's last status/count, without keys. `GET /stream/movie/{imdb}.json` returns movie streams; series use `/stream/series/{imdb}:{season}:{episode}.json`.
+## Development
 
-Run regression tests with `python -m unittest discover -s tests -v`. Tests cover more than five cached entries, no additions during discovery, expired/tampered playback links, correct TorBox file IDs, series matching, cache disappearance, provider failure isolation, and bounded aggregation waits.
+Run `python addon.py`. Test with `python -m unittest discover -s tests -v`. No dependencies beyond Python 3.9+ standard library.
 
-Upstream documentation: [TorBox API](https://api-docs.torbox.app/), [Torrentio source](https://github.com/TheBeastLT/torrentio-scraper), [DMM source](https://github.com/debridmediamanager/debrid-media-manager).
+Routes: `/manifest.json`, `/health`, `/stream/movie/{imdb}.json`, `/stream/series/{imdb}:{season}:{episode}.json`, and signed `/torbox/play/...` paths.
+
+Documentation: [TorBox API](https://api-docs.torbox.app/), [Knaben API](https://knaben.org/api/v2/), [Stremio protocol](https://stremio.github.io/stremio-addon-sdk/protocol.html).

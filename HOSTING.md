@@ -1,17 +1,15 @@
 # Render deployment
 
-Use the existing Docker web service. Its repository must contain `addon.py`, `torbox_provider.py`, and `Dockerfile` at the root.
+The Docker service builds `addon.py` and `torbox_provider.py` from this repository.
 
-1. Keep the existing `DMM_TOKEN` environment variable.
-2. Add `TORBOX_API_KEY` from your TorBox account settings. Enter it in Render's Environment page; never commit it to GitHub.
-3. Save the environment and deploy the latest commit from `main`.
-4. Check `/health`: version must be `1.2.0` and `torbox.configured` must be `true`.
-5. Open a title, then check `torbox.lastStatus` and `torbox.lastCount` in `/health`.
+1. Keep the existing `TORBOX_API_KEY` environment value. No DMM token is required.
+2. Deploy the latest commit from `main`.
+3. Check `/health`: version `2.0.0`, provider list `torbox`, and `torbox.configured: true`.
+4. Search a title and inspect `/health` for per-index success/errors and cached-file counts.
+5. In Nuvio, install or refresh `https://dmm-plus.onrender.com/manifest.json`. Select **TorBox Plus**. The original **DMM Cast for TorBox** entry is a different add-on.
 
-Render supplies `PORT` and `RENDER_EXTERNAL_URL`. The manifest remains at `https://dmm-plus.onrender.com/manifest.json`; Nuvio does not need a replacement URL. Refresh the title's stream list after deployment.
+Render automatically supplies `PORT` and `RENDER_EXTERNAL_URL`. Public playback links are signed and expire. Viewer IP is used when choosing TorBox's CDN; minted links are cached separately by viewer.
 
-`TORBOX_MAX_STREAMS` defaults to 100 and is separate from the existing 60-entry DMM Cast budget. Results are restricted to files confirmed cached by TorBox. No DMM sponsor key is required for the independent torrent provider.
+Knaben and Peerflix are independent public indexes. Search results are filtered to cached playable TorBox files. Neither index receives the TorBox key. A source outage is reported and the other source can still provide results. Empty searches have a short cache lifetime to allow recovery.
 
-If `torbox.lastStatus` contains `401`, `403`, or `BAD_TOKEN`, check the TorBox account key. `429` means wait for TorBox's rate-limit cooldown. An `ok` status with zero results means the index/cached file match produced no playable choices for that title; a higher limit cannot manufacture missing cached files.
-
-The free Render instance may sleep when inactive. The first request after sleep can be delayed while it starts.
+Optional preferences: `PREFER_ENGLISH=true`, `HIDE_CAM=false`, `MAX_FILE_SIZE_GB=0`, and `TORBOX_MAX_STREAMS=100` (maximum 200). The free Render instance can sleep when idle, delaying its first request.

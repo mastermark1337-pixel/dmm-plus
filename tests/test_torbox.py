@@ -12,7 +12,7 @@ FILE = {"id": 349, "name": "Movie/Movie.2026.1080p.mkv", "size": 5 * 1024**3}
 
 class TorBoxTests(unittest.TestCase):
     def setUp(self):
-        self.provider = TorBoxProvider("test-account-key")
+        self.provider = TorBoxProvider("test-account-key", enable_knaben=False)
 
     def test_resolution_uses_filename_before_release_group(self):
         self.assertEqual(quality("Movie.1080p.[4kHDHub.com].mkv"), "1080p")
@@ -44,7 +44,7 @@ class TorBoxTests(unittest.TestCase):
         upstream = {"streams": [{"infoHash": h, "fileIdx": 0,
                                   "behaviorHints": {"filename": "Movie.2026.1080p.mkv"}}
                                  for h in hashes]}
-        cached = {h: {"files": [FILE]} for h in hashes[:-1]}
+        cached = {h: {"files": [dict(FILE, size=FILE["size"] + i)]} for i, h in enumerate(hashes[:-1])}
         with patch.object(self.provider, "_request", return_value=upstream) as search, \
                 patch.object(self.provider, "_api", return_value=cached) as api:
             rows = self.provider.streams("tt34890576", "movie")
@@ -122,6 +122,29 @@ class TorBoxTests(unittest.TestCase):
         with patch.object(self.provider, "_request", return_value=upstream), \
                 patch.object(self.provider, "_api", return_value={H1: {"files": []}}):
             self.assertEqual(self.provider.streams("tt34890576", "movie"), [])
+
+    def test_knaben_rejects_wrong_movie_and_year(self):
+        payloads = [{"meta": {"id": "tt34890576", "name": "Clayface", "releaseInfo": "2026"}},
+                    {"hits": [
+                        {"title": "Clayface.2026.1080p", "hash": H1},
+                        {"title": "Clayface.2020.1080p", "hash": H2},
+                        {"title": "Another.Movie.2026", "hash": "c" * 40}]}]
+        with patch.object(self.provider, "_request", side_effect=payloads):
+            rows = self.provider._knaben_streams("tt34890576", "movie", None, None, time.monotonic() + 10)
+        self.assertEqual([r["infoHash"] for r in rows], [H1])
+
+    def test_one_failed_index_does_not_hide_other_index(self):
+        provider = TorBoxProvider("test-key")
+        with patch.object(provider, "_index_streams", side_effect=ProviderError("torrent_search_http_503")), \
+                patch.object(provider, "_knaben_streams", return_value=[{"infoHash": H1}]):
+            rows = provider._search("tt34890576", "movie", None, None, time.monotonic() + 10)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(provider.last_sources["Knaben"]["status"], "ok")
+
+    def test_underscore_episode_names_match_correct_episode(self):
+        files = [dict(FILE, name="Show_S01E01_1080p.mkv", id=3),
+                 dict(FILE, name="Show_S01E02_1080p.mkv", id=9)]
+        self.assertEqual(select_file(files, season=1, episode=2)["id"], 9)
 
 
 if __name__ == "__main__":
